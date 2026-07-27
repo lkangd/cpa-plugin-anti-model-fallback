@@ -1,5 +1,8 @@
 # cpa-plugin-anti-model-fallback
 
+[![CI](https://github.com/lkangd/cpa-plugin-anti-model-fallback/actions/workflows/ci.yml/badge.svg)](https://github.com/lkangd/cpa-plugin-anti-model-fallback/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 CLIProxyAPI(cpa)插件。阻止上游"模型兜底"—— 即请求 A 模型、上游却用 B 模型处理并以 HTTP 200 返回。
 
 对受保护模型:检测到兜底 → 不返回给客户端 → 重试 → 仍兜底则返回 503 错误。
@@ -120,3 +123,7 @@ cpa 的 alias 会把 `my-glm-5.2` 改写成 `glm-5.2` 再发给上游,上游报�
 
 非流式每次重试都完整烧一遍 token(要读完整个 body 才知道模型);流式在开头就能判定,成本很低。
 因此 `max_retries` 不宜设过大。
+
+## License
+
+[MIT](LICENSE)
