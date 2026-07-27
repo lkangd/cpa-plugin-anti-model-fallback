@@ -13,14 +13,35 @@ on:
 permissions:
   contents: read
 
+env:
+  PLUGIN_ID: anti-model-fallback
+
 jobs:
+  version:
+    name: resolve version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+    steps:
+      - id: resolve
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            version="${{ inputs.version }}"
+          else
+            version="${GITHUB_REF_NAME#v}"
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "building version ${version}"
+
   build:
     name: build ${{ matrix.goos }}/${{ matrix.goarch }}
+    needs: version
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
-      # cgo cannot be cross-compiled without a target toolchain, so each
-      # artifact is built on a runner of its own architecture.
+      # cgo cannot be cross-compiled without a target toolchain, so every
+      # artifact is built on a runner of its own OS and architecture.
       matrix:
         include:
           - runner: ubuntu-latest
@@ -40,6 +61,14 @@ jobs:
             goos: darwin
             goarch: arm64
             ext: dylib
+          - runner: windows-latest
+            goos: windows
+            goarch: amd64
+            ext: dll
+          - runner: windows-11-arm
+            goos: windows
+            goarch: arm64
+            ext: dll
 
     steps:
       - uses: actions/checkout@v4
@@ -49,65 +78,114 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Resolve version
-        id: version
-        shell: bash
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            version="${{ inputs.version }}"
-          else
-            version="${GITHUB_REF_NAME#v}"
-          fi
-          echo "version=${version}" >> "$GITHUB_OUTPUT"
-          echo "building version ${version}"
-
       - name: Test
         run: go test ./...
 
       - name: Build
+        shell: bash
         env:
           CGO_ENABLED: "1"
-        run: make build VERSION=${{ steps.version.outputs.version }}
-
-      - name: Stage artifact
-        shell: bash
         run: |
-          version="${{ steps.version.outputs.version }}"
-          src="dist/${{ matrix.goos }}/${{ matrix.goarch }}/anti-model-fallback-v${version}.${{ matrix.ext }}"
-          mkdir -p release
-          cp "$src" "release/anti-model-fallback-v${version}-${{ matrix.goos }}-${{ matrix.goarch }}.${{ matrix.ext }}"
-          ls -la release/
+          go build -buildmode=c-shared \
+            -ldflags "-X main.pluginVersion=${{ needs.version.outputs.version }}" \
+            -o "staging/${PLUGIN_ID}.${{ matrix.ext }}" .
+          ls -la staging/
+
+      # The store expects the library alone at the root of the zip, so only the
+      # library is uploaded; the cgo-generated header is deliberately dropped.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lib-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: staging/${{ env.PLUGIN_ID }}.${{ matrix.ext }}
+          if-no-files-found: error
+
+  build-freebsd:
+    name: build freebsd/amd64
+    needs: version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build in FreeBSD VM
+        uses: vmactions/freebsd-vm@v1
+        with:
+          usesh: true
+          prepare: |
+            pkg install -y go curl gcc
+          run: |
+            set -e
+            go version
+            go test ./...
+            CGO_ENABLED=1 go build -buildmode=c-shared \
+              -ldflags "-X main.pluginVersion=${{ needs.version.outputs.version }}" \
+              -o "staging/anti-model-fallback.so" .
+            ls -la staging/
 
       - uses: actions/upload-artifact@v4
         with:
-          name: anti-model-fallback-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: release/*
+          name: lib-freebsd-amd64
+          path: staging/anti-model-fallback.so
           if-no-files-found: error
 
-  release:
-    name: publish release
-    needs: build
+  package:
+    name: package and publish
+    needs: [version, build, build-freebsd]
+    if: always() && needs.build.result == 'success'
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: write
 
     steps:
       - uses: actions/download-artifact@v4
         with:
-          path: artifacts
-          merge-multiple: true
+          path: libs
+          pattern: lib-*
 
-      - name: List artifacts
-        run: ls -la artifacts/
+      # Store format: <pluginID>_<version>_<goos>_<goarch>.zip holding the
+      # library alone at the root, plus a SHA256 checksums.txt.
+      - name: Package for the plugin store
+        shell: bash
+        run: |
+          set -e
+          version="${{ needs.version.outputs.version }}"
+          mkdir -p release
+          for dir in libs/lib-*; do
+            slug="${dir#libs/lib-}"
+            goos="${slug%%-*}"
+            goarch="${slug#*-}"
+            lib="$(find "$dir" -maxdepth 1 -type f -name "${PLUGIN_ID}.*" | head -1)"
+            if [ -z "$lib" ]; then
+              echo "no library found in $dir"; exit 1
+            fi
+            workdir="$(mktemp -d)"
+            cp "$lib" "$workdir/$(basename "$lib")"
+            ( cd "$workdir" && zip -q -X "${PLUGIN_ID}_${version}_${goos}_${goarch}.zip" "$(basename "$lib")" )
+            mv "$workdir/${PLUGIN_ID}_${version}_${goos}_${goarch}.zip" release/
+          done
+          ( cd release && sha256sum *.zip > checksums.txt )
+          ls -la release/
+          echo "--- checksums.txt ---"
+          cat release/checksums.txt
+          echo "--- zip contents ---"
+          for z in release/*.zip; do echo "$z:"; unzip -l "$z" | sed -n '4p'; done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: store-release
+          path: release/*
+          if-no-files-found: error
 
       - uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/v')
         with:
-          files: artifacts/*
+          files: release/*
           generate_release_notes: true
           body: |
-            Native CLIProxyAPI plugin builds. Download the file matching your
-            platform and drop it into `<plugins.dir>/<goos>/<goarch>/`, for example
+            CLIProxyAPI plugin builds in the plugin-store format.
+
+            Install from the CPA management center plugin store, or manually:
+            unzip the archive matching your platform and drop the library into
+            `<plugins.dir>/<goos>/<goarch>/`, for example
             `~/.cli-proxy-api/plugins/darwin/arm64/`.
 
             The host must be a cpa build with plugin support
