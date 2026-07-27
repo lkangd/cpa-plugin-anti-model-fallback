@@ -1,5 +1,5 @@
 PLUGIN_NAME := anti-model-fallback
-VERSION := 0.1.0
+VERSION ?= 0.1.0
 GOOS ?= $(shell go env GOOS)
 GOARCH ?= $(shell go env GOARCH)
 
@@ -13,6 +13,7 @@ endif
 
 DIST := dist/$(GOOS)/$(GOARCH)
 ARTIFACT := $(DIST)/$(PLUGIN_NAME)-v$(VERSION).$(EXT)
+LDFLAGS := -X main.pluginVersion=$(VERSION)
 
 # INSTALL_DIR must match plugins.dir in config.yaml.
 INSTALL_DIR ?= $(HOME)/.cli-proxy-api/plugins/$(GOOS)/$(GOARCH)
@@ -29,7 +30,7 @@ vet:
 
 build:
 	@mkdir -p $(DIST)
-	CGO_ENABLED=1 go build -buildmode=c-shared -o $(ARTIFACT) .
+	CGO_ENABLED=1 go build -buildmode=c-shared -ldflags "$(LDFLAGS)" -o $(ARTIFACT) .
 	@echo "built $(ARTIFACT)"
 
 install: build

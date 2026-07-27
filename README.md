@@ -41,7 +41,19 @@ Executor 调 `host.model.execute` 会重新走宿主执行链,可能再次命中
 1. 重放请求带上 `X-Cpa-Anti-Model-Fallback-Bypass` 头,Router 见到就放行(`Handled=false`)。
 2. 熔断:并发执行数超过 64 时 Router 一律放行,万一 header 被宿主丢弃也不会无限递归。
 
-## 构建
+## 安装
+
+### 方式一:下载预编译产物(无需 Go)
+
+到 [Releases](https://github.com/lkangd/cpa-plugin-anti-model-fallback/releases) 下载对应平台的文件
+(linux/darwin × amd64/arm64),放进 `<plugins.dir>/<goos>/<goarch>/`,例如:
+
+```bash
+mkdir -p ~/.cli-proxy-api/plugins/darwin/arm64
+cp anti-model-fallback-v0.1.0-darwin-arm64.dylib ~/.cli-proxy-api/plugins/darwin/arm64/
+```
+
+### 方式二:自行构建
 
 需要 Go(CGO)+ 编译器。cpa 必须是带插件支持的构建 —— 验证:
 

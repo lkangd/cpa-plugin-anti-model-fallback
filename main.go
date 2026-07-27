@@ -72,6 +72,10 @@ import (
 
 const pluginIdentifier = "anti-model-fallback"
 
+// pluginVersion is reported to the host at registration. Release builds inject
+// the tag via -ldflags so the management UI matches the published artifact.
+var pluginVersion = "dev"
+
 type envelope struct {
 	OK     bool            `json:"ok"`
 	Result json.RawMessage `json:"result,omitempty"`
@@ -196,7 +200,7 @@ func pluginRegistration() registration {
 		SchemaVersion: pluginabi.SchemaVersion,
 		Metadata: pluginapi.Metadata{
 			Name:             pluginIdentifier,
-			Version:          "0.1.0",
+			Version:          pluginVersion,
 			Author:           "lkangd",
 			GitHubRepository: "https://github.com/lkangd/cpa-plugin-anti-model-fallback",
 			ConfigFields: []pluginapi.ConfigField{
