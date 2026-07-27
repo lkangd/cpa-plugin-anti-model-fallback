@@ -1,0 +1,22 @@
+# Build output
+dist/
+
+# Compiled plugin artifacts and cgo-generated headers
+*.dylib
+*.so
+*.dll
+*.h
+
+# Go
+*.test
+*.out
+vendor/
+
+# Stray binary from `go build ./...` (named after the module directory)
+/cpa-plugin-anti-model-fallback
+
+# Editor and agent local state
+.claude/
+.DS_Store
+.idea/
+.vscode/
