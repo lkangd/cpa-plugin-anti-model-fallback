@@ -110,9 +110,13 @@ func runGuardedStream(req rpcExecutorRequest, streamID string) error {
 		if errRun != nil {
 			if errRun == errModelFallback {
 				lastActual = actual
+				logFallbackDetected(req.HostCallbackID, clientModel, expected, actual, attempt+1, budget, true)
 				continue
 			}
 			return errRun
+		}
+		if attempt > 0 {
+			logFallbackResolved(req.HostCallbackID, clientModel, expected, actual, attempt+1, true)
 		}
 		return nil
 	}
@@ -120,6 +124,7 @@ func runGuardedStream(req rpcExecutorRequest, streamID string) error {
 	// Retry budget spent: surface a loud error instead of a silently wrong model.
 	// The host turns this into the terminating SSE error event, so the plugin
 	// must not emit one itself or the client would receive it twice.
+	logFallbackBlocked(req.HostCallbackID, clientModel, expected, lastActual, budget+1, true)
 	return fmt.Errorf("%s", fallbackMessage(expected, lastActual, budget+1))
 }
 
@@ -130,6 +135,10 @@ var errModelFallback = fmt.Errorf("model fallback detected")
 // forwardOnce runs a single upstream stream attempt. It buffers chunks until the
 // processing model is known; once the attempt is accepted the buffer is flushed
 // and the remainder is streamed straight through.
+//
+// The returned string is the processing model the upstream reported: the
+// offending one alongside errModelFallback, or the accepted one on success. It
+// is empty when the response never named a model.
 func forwardOnce(req rpcExecutorRequest, streamID, expected string, protected bool) (string, error) {
 	resp, errStart := hostModelExecuteStream(req)
 	if errStart != nil {
@@ -148,6 +157,7 @@ func forwardOnce(req rpcExecutorRequest, streamID, expected string, protected bo
 	var buffered [][]byte
 	var bufferedBytes int
 	var probe bytes.Buffer
+	var acceptedModel string
 	accepted := !protected
 
 	for {
@@ -176,6 +186,7 @@ func forwardOnce(req rpcExecutorRequest, streamID, expected string, protected bo
 					return actual, errModelFallback
 				case actual != "":
 					accepted = true
+					acceptedModel = actual
 				case len(buffered) >= maxProbeChunks || bufferedBytes >= maxProbeBytes:
 					// No model reported in time: fail open rather than stall.
 					accepted = true
@@ -199,7 +210,7 @@ func forwardOnce(req rpcExecutorRequest, streamID, expected string, protected bo
 			return "", errFlush
 		}
 	}
-	return "", nil
+	return acceptedModel, nil
 }
 
 // forwardRemainder streams whatever the host produced without inspection. It is

@@ -45,12 +45,15 @@ Executor 调 `host.model.execute` 会重新走宿主执行链,可能再次命中
 
 ### 方式一:下载预编译产物(无需 Go)
 
-到 [Releases](https://github.com/lkangd/cpa-plugin-anti-model-fallback/releases) 下载对应平台的文件
-(linux/darwin × amd64/arm64),放进 `<plugins.dir>/<goos>/<goarch>/`,例如:
+在 CPA 管理中心的「插件商店」里直接安装即可(本插件已上架官方商店)。
+
+也可以手动:到 [Releases](https://github.com/lkangd/cpa-plugin-anti-model-fallback/releases)
+下载对应平台的 zip,解压后把动态库放进 `<plugins.dir>/<goos>/<goarch>/`,例如:
 
 ```bash
 mkdir -p ~/.cli-proxy-api/plugins/darwin/arm64
-cp anti-model-fallback-v0.1.0-darwin-arm64.dylib ~/.cli-proxy-api/plugins/darwin/arm64/
+unzip anti-model-fallback_0.2.0_darwin_arm64.zip
+cp anti-model-fallback.dylib ~/.cli-proxy-api/plugins/darwin/arm64/
 ```
 
 ### 方式二:自行构建
@@ -64,7 +67,7 @@ curl -s -o /dev/null -D - http://127.0.0.1:8317/v0/management/ | grep -i x-cpa-s
 
 ```bash
 make test      # 单元测试
-make build     # 产出 dist/<goos>/<goarch>/anti-model-fallback-v0.1.0.<ext>
+make build     # 产出 dist/<goos>/<goarch>/anti-model-fallback-v<version>.<ext>
 make install   # 复制到 ~/.cli-proxy-api/plugins/<goos>/<goarch>/
 ```
 
@@ -123,6 +126,24 @@ cpa 的 alias 会把 `my-glm-5.2` 改写成 `glm-5.2` 再发给上游,上游报�
 
 流式的状态码插件控制不了:`host.stream.close` 这个 RPC 只有 `Error string` 字段,没有状态位。
 但因为判定通过前不发送任何字节,兜底内容不会泄露给客户端。
+
+## 日志与统计
+
+命中兜底时插件会写入 cpa 的日志,可在管理中心「日志查看」里按 `anti-model-fallback` 过滤统计:
+
+```
+[warn ] anti-model-fallback: fallback detected | requested=my-glm-5.2 expected=glm-5.2 served=kimi-for-coding attempt=1/11 transport=non-stream model=kimi-for-coding reason="..."
+[error] anti-model-fallback: fallback blocked | requested=my-glm-5.2 expected=glm-5.2 served=kimi-for-coding attempts=11 transport=non-stream model=kimi-for-coding reason="retry budget exhausted"
+[info ] anti-model-fallback: retry resolved fallback | requested=my-glm-5.2 expected=glm-5.2 served=glm-5.2 attempt=3 transport=stream model=glm-5.2
+```
+
+| 消息 | 级别 | 含义 | 计数用途 |
+|---|---|---|---|
+| `fallback detected` | warn | 单次上游尝试被兜底 | **每行 = 一次兜底**,数行数即总兜底次数 |
+| `fallback blocked` | error | 重试耗尽,返回错误给客户端 | 每行 = 一个彻底失败的请求 |
+| `retry resolved fallback` | info | 重试后命中正确模型 | 每行 = 一次被插件救回的请求 |
+
+注意:cpa 的日志 formatter 只渲染固定白名单字段,所以明细直接拼在消息里。
 
 ## 已知局限
 

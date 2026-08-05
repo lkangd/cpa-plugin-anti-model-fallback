@@ -111,12 +111,17 @@ func execute(raw []byte) ([]byte, error) {
 		outcome, actual := classifyAttempt(resp.StatusCode, resp.Body, expected)
 		switch outcome {
 		case outcomeAccepted, outcomePassthrough:
+			if attempt > 0 && outcome == outcomeAccepted {
+				logFallbackResolved(req.HostCallbackID, clientModel, expected, actual, attempt+1, false)
+			}
 			return okEnvelope(executorResponseFrom(resp))
 		case outcomeFallback:
 			lastActual = actual
+			logFallbackDetected(req.HostCallbackID, clientModel, expected, actual, attempt+1, budget, false)
 		}
 	}
 
+	logFallbackBlocked(req.HostCallbackID, clientModel, expected, lastActual, budget+1, false)
 	return errorEnvelopeWithStatus(
 		"model_fallback_blocked",
 		fallbackMessage(expected, lastActual, budget+1),
